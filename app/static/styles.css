@@ -1,0 +1,262 @@
+:root {
+  --bg: #f4efe7;
+  --panel: rgba(255, 252, 247, 0.88);
+  --ink: #1c1b1a;
+  --muted: #5f5a53;
+  --line: rgba(28, 27, 26, 0.12);
+  --accent: #b7492e;
+  --accent-2: #1f6d64;
+  --shadow: 0 18px 40px rgba(40, 28, 15, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(183, 73, 46, 0.16), transparent 32%),
+    radial-gradient(circle at right, rgba(31, 109, 100, 0.16), transparent 28%),
+    linear-gradient(180deg, #f8f3eb 0%, var(--bg) 100%);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.page-shell {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+  align-items: stretch;
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  margin: 8px 0 12px;
+  font-size: clamp(32px, 5vw, 56px);
+  line-height: 1;
+}
+
+.eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.subtitle,
+.muted,
+.sample-card p,
+.compare-meta p,
+.history-item p {
+  color: var(--muted);
+}
+
+.hero-card,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
+.hero-card {
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.stat span,
+.metric-card span {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.stat strong,
+.metric-card strong {
+  font-size: 24px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.checkbox-label {
+  align-content: start;
+}
+
+.checkbox-label input {
+  width: 20px;
+  height: 20px;
+}
+
+input,
+select,
+button {
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+button {
+  background: linear-gradient(135deg, var(--accent), #d26f4b);
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.gallery,
+.comparison-list,
+.history {
+  display: grid;
+  gap: 12px;
+}
+
+.gallery {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.sample-card,
+.compare-card,
+.history-item,
+.metric-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.sample-card {
+  overflow: hidden;
+}
+
+.sample-card img,
+.compare-images img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+}
+
+.sample-card div,
+.compare-meta,
+.history-item,
+.metric-card {
+  padding: 12px;
+}
+
+.metrics-panel {
+  grid-column: span 2;
+}
+
+.metrics-cards {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.bar-chart {
+  display: grid;
+  gap: 12px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 70px;
+  gap: 12px;
+  align-items: center;
+}
+
+.bar-track {
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(28, 27, 26, 0.08);
+}
+
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+}
+
+.compare-card {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.compare-images {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.history {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .hero,
+  .grid,
+  .metrics-cards,
+  .gallery,
+  .history,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-panel {
+    grid-column: auto;
+  }
+
+  .compare-card {
+    grid-template-columns: 1fr;
+  }
+}
