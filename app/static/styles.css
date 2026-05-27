@@ -104,6 +104,12 @@ body {
   margin-bottom: 16px;
 }
 
+.button-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .panel-head h2 {
   margin: 0;
   font-size: 22px;
@@ -147,6 +153,10 @@ button {
   cursor: pointer;
 }
 
+.secondary-btn {
+  background: linear-gradient(135deg, #495057, #6c757d);
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: progress;
@@ -166,10 +176,26 @@ button:disabled {
 .sample-card,
 .compare-card,
 .history-item,
-.metric-card {
+.metric-card,
+.info-card {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.6);
+}
+
+.history-clickable {
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.history-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(40, 28, 15, 0.08);
+}
+
+.history-clickable.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(183, 73, 46, 0.18);
 }
 
 .sample-card {
@@ -187,8 +213,50 @@ button:disabled {
 .sample-card div,
 .compare-meta,
 .history-item,
-.metric-card {
+.metric-card,
+.info-card {
   padding: 12px;
+}
+
+.compare-meta {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.compare-meta p {
+  margin: 0;
+}
+
+.compare-details {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.compare-details summary {
+  cursor: pointer;
+  color: var(--accent-2);
+  font-weight: 700;
+  user-select: none;
+}
+
+.compare-extra {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.compare-extra pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(28, 27, 26, 0.04);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 240px;
+  overflow: auto;
 }
 
 .metrics-panel {
@@ -242,13 +310,96 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.info-card {
+  display: grid;
+  gap: 8px;
+}
+
+.info-card pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(28, 27, 26, 0.04);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.info-card p,
+.stats-board p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compare-controls {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.compare-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compare-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.import-actions {
+  display: flex;
+  align-items: end;
+}
+
+.progress-block {
+  display: grid;
+  gap: 10px;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.progress-track {
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(28, 27, 26, 0.08);
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width 0.25s ease;
+}
+
 @media (max-width: 1100px) {
   .hero,
   .grid,
   .metrics-cards,
   .gallery,
   .history,
-  .form-grid {
+  .form-grid,
+  .stats-grid,
+  .compare-board,
+  .compare-controls {
     grid-template-columns: 1fr;
   }
 

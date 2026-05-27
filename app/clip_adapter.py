@@ -13,6 +13,8 @@ from torchvision import transforms
 
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
+ROOT = Path(__file__).resolve().parent.parent
+LOCAL_OPENCLIP_WEIGHTS = ROOT / "models" / "clip" / "open_clip_pytorch_model.bin"
 
 
 def _find_backend() -> Tuple[Optional[str], Optional[str]]:
@@ -88,7 +90,16 @@ class ClipAdapter:
         if self.backend == "open_clip":
             import open_clip  # type: ignore
 
-            model, _, preprocess = open_clip.create_model_and_transforms(self.model_id, pretrained=self.pretrained)
+            if LOCAL_OPENCLIP_WEIGHTS.exists():
+                model, _, preprocess = open_clip.create_model_and_transforms(
+                    self.model_id,
+                    pretrained=str(LOCAL_OPENCLIP_WEIGHTS),
+                )
+            else:
+                model, _, preprocess = open_clip.create_model_and_transforms(
+                    self.model_id,
+                    pretrained=self.pretrained,
+                )
             self.model = model.eval().to(self.device)
             self.preprocess = preprocess
             self.tokenizer = open_clip.get_tokenizer(self.model_id)

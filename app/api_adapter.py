@@ -4,8 +4,8 @@ import base64
 import io
 import json
 import re
+import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
@@ -44,7 +44,11 @@ class VisionApiAdapter:
 
     def statuses(self) -> List[Dict]:
         return [
-            ApiStatus(provider="mock", available=True, message="Local mock multimodal API is available.").__dict__,
+            ApiStatus(
+                provider="mock",
+                available=True,
+                message="Local mock provider for offline pipeline verification.",
+            ).__dict__,
             ApiStatus(
                 provider="openai_compatible",
                 available=True,
@@ -80,8 +84,9 @@ class VisionApiAdapter:
             answer = forced
             mode = "prompt_injected"
         else:
-            answer = base["label"]
-            confidence = base["confidence"]
+            matched = next((label for label in candidate_labels if label.lower() == base["label"].lower()), None)
+            answer = matched or (candidate_labels[0] if candidate_labels else base["label"])
+            confidence = base["confidence"] if matched else max(base["confidence"], 0.55)
             mode = "vision_reasoning"
         return {
             "provider": "mock",
@@ -94,8 +99,7 @@ class VisionApiAdapter:
 
     def classify_openai_compatible(
         self,
-        image: Image.Image,
-        prompt: str,
+        messages: List[Dict],
         candidate_labels: List[str],
         api_base_url: str,
         api_key: str,
@@ -103,45 +107,59 @@ class VisionApiAdapter:
     ) -> Dict:
         if not api_base_url or not api_key or not api_model:
             raise ValueError("api_base_url, api_key and api_model are required for openai_compatible provider")
-
-        content = [
-            {
-                "type": "text",
-                "text": (
-                    f"{prompt}\n"
-                    f"Candidate labels: {', '.join(candidate_labels)}.\n"
-                    "Return JSON with keys label and reason."
-                ),
-            },
-            {
-                "type": "image_url",
-                "image_url": {"url": image_to_data_url(image)},
-            },
-        ]
         payload = {
             "model": api_model,
-            "messages": [{"role": "user", "content": content}],
+            "messages": messages,
         }
-        response = requests.post(
-            api_base_url.rstrip("/") + "/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=60,
-        )
-        if not response.ok:
+        response = None
+        last_error = None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    api_base_url.rstrip("/") + "/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=60,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2**attempt)
+                    continue
+                raise ValueError(f"Remote API request failed: {exc}") from exc
+
+            if response.ok:
+                break
+
             detail = response.text
             try:
                 error_payload = response.json()
                 detail = error_payload.get("error", {}).get("message", detail)
             except Exception:
                 pass
+
+            retryable = response.status_code in {429, 500, 502, 503, 504}
+            if retryable and attempt < 2:
+                last_error = ValueError(f"{response.status_code} {detail}")
+                time.sleep(2**attempt)
+                continue
             raise ValueError(f"Remote API request failed: {response.status_code} {detail}")
+
+        if response is None:
+            raise ValueError(f"Remote API request failed: {last_error}")
         result = response.json()
         raw_text = result["choices"][0]["message"]["content"]
+        if isinstance(raw_text, list):
+            raw_text = "\n".join(
+                item.get("text", "")
+                for item in raw_text
+                if isinstance(item, dict)
+            )
         label = None
+        options = {f"c{idx}": candidate for idx, candidate in enumerate(candidate_labels)}
         if isinstance(raw_text, str):
             try:
                 cleaned = raw_text.strip()
@@ -150,10 +168,13 @@ class VisionApiAdapter:
                     cleaned = re.sub(r"\s*```$", "", cleaned)
                 parsed = json.loads(cleaned)
                 label = parsed.get("label")
+                choice_id = parsed.get("choice_id")
+                if choice_id in options:
+                    label = options[choice_id]
             except Exception:
                 lowered = raw_text.lower()
                 for candidate in candidate_labels:
-                    if candidate in lowered:
+                    if candidate.lower() in lowered:
                         label = candidate
                         break
         if label not in candidate_labels:
@@ -167,22 +188,72 @@ class VisionApiAdapter:
             "raw_text": raw_text,
         }
 
+    def _flatten_message_text(self, value) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: List[str] = []
+            for item in value:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text", "")))
+                    elif "text" in item:
+                        parts.append(str(item.get("text", "")))
+                elif isinstance(item, str):
+                    parts.append(item)
+            return "\n".join(part for part in parts if part)
+        if isinstance(value, dict):
+            return str(value.get("text", ""))
+        return ""
+
     def classify(
         self,
         image: Image.Image,
-        prompt: str,
         candidate_labels: List[str],
         provider: str,
+        prompt: Optional[str] = None,
         api_base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         api_model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        extra_messages: Optional[List[Dict]] = None,
     ) -> Dict:
         if provider == "mock":
-            return self.classify_mock(image, prompt, candidate_labels)
+            prompt_parts: List[str] = []
+            if system_prompt:
+                prompt_parts.append(system_prompt)
+            if prompt:
+                prompt_parts.append(prompt)
+            for message in extra_messages or []:
+                prompt_parts.append(self._flatten_message_text(message.get("content")))
+            return self.classify_mock(image, "\n".join(part for part in prompt_parts if part), candidate_labels)
+
         if provider == "openai_compatible":
+            base_prompt = prompt or ""
+            options_text = "\n".join(f"c{idx}: {candidate}" for idx, candidate in enumerate(candidate_labels))
+            content = [
+                {
+                    "type": "text",
+                    "text": (
+                        f"{base_prompt}\n"
+                        "Choose exactly one option from the candidate list below.\n"
+                        f"{options_text}\n"
+                        "Return strict JSON with keys choice_id, label, and reason."
+                    ),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_to_data_url(image)},
+                },
+            ]
+            messages: List[Dict] = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            if extra_messages:
+                messages.extend(extra_messages)
+            messages.append({"role": "user", "content": content})
             return self.classify_openai_compatible(
-                image,
-                prompt,
+                messages,
                 candidate_labels,
                 api_base_url=api_base_url or "",
                 api_key=api_key or "",
