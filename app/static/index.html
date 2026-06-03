@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LLMSafe 多模态模型攻击与安全评估平台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260507c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260603a" />
 </head>
 <body>
   <div class="page-shell">
@@ -219,6 +219,14 @@
           <span class="muted">展示图像、预测变化、候选文本与调试信息</span>
         </div>
         <div class="compare-toolbar">
+          <select id="comparisonFilterSelect" aria-label="comparison filter">
+            <option value="all">All</option>
+            <option value="success">Success only</option>
+            <option value="failed">Failed only</option>
+            <option value="shifted">Answer shifted</option>
+            <option value="unchanged">Answer unchanged</option>
+          </select>
+          <span id="comparisonFilterCount" class="muted">0 / 0</span>
           <button id="toggleComparisonBtn" type="button" class="secondary-btn">展开全部</button>
         </div>
         <div id="comparisonList" class="comparison-list"></div>
@@ -256,6 +264,6 @@
       </section>
     </main>
   </div>
-  <script src="/static/app.js?v=20260507c"></script>
+  <script src="/static/app.js?v=20260603a"></script>
 </body>
 </html>

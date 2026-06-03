@@ -13,6 +13,7 @@ let currentRunId = null;
 let currentRunTimer = null;
 let currentSelectedExperimentId = null;
 let comparisonExpanded = false;
+let comparisonFilter = "all";
 let currentExperimentDetail = null;
 const collapsedComparisonCount = 1;
 
@@ -166,13 +167,23 @@ function renderMetrics(result) {
 
 function renderComparisons(result) {
   const records = result.records || [];
+  const filteredRecords = filterComparisonRecords(records);
   const toggleButton = document.getElementById("toggleComparisonBtn");
+  const filterCount = document.getElementById("comparisonFilterCount");
+  if (filterCount) {
+    filterCount.textContent = `${filteredRecords.length} / ${records.length}`;
+  }
   if (!records.length) {
     document.getElementById("comparisonList").innerHTML = "<p>暂无对比数据。</p>";
     toggleButton.style.display = "none";
     return;
   }
-  const visibleRecords = comparisonExpanded ? records : records.slice(0, collapsedComparisonCount);
+  if (!filteredRecords.length) {
+    document.getElementById("comparisonList").innerHTML = "<p>当前筛选条件下没有样本。</p>";
+    toggleButton.style.display = "none";
+    return;
+  }
+  const visibleRecords = comparisonExpanded ? filteredRecords : filteredRecords.slice(0, collapsedComparisonCount);
   document.getElementById("comparisonList").innerHTML = visibleRecords.map(item => `
     <article class="compare-card">
       <div class="compare-images">
@@ -200,14 +211,30 @@ function renderComparisons(result) {
       </div>
     </article>
   `).join("");
-  if (records.length <= collapsedComparisonCount) {
+  if (filteredRecords.length <= collapsedComparisonCount) {
     toggleButton.style.display = "none";
   } else {
     toggleButton.style.display = "inline-flex";
     toggleButton.textContent = comparisonExpanded
-      ? `收起（当前显示 ${visibleRecords.length} / ${records.length}）`
-      : `展开全部（当前显示 ${visibleRecords.length} / ${records.length}）`;
+      ? `收起（当前显示 ${visibleRecords.length} / ${filteredRecords.length}）`
+      : `展开全部（当前显示 ${visibleRecords.length} / ${filteredRecords.length}）`;
   }
+}
+
+function filterComparisonRecords(records) {
+  if (comparisonFilter === "success") {
+    return records.filter(item => Boolean(item.metrics?.success));
+  }
+  if (comparisonFilter === "failed") {
+    return records.filter(item => !item.metrics?.success);
+  }
+  if (comparisonFilter === "shifted") {
+    return records.filter(item => item.answer_shifted || item.original_prediction !== item.adversarial_prediction);
+  }
+  if (comparisonFilter === "unchanged") {
+    return records.filter(item => !(item.answer_shifted || item.original_prediction !== item.adversarial_prediction));
+  }
+  return records;
 }
 
 function renderExperimentDetail(result) {
@@ -616,6 +643,15 @@ document.getElementById("runBtn").addEventListener("click", runAttack);
 document.getElementById("clearExperimentsBtn").addEventListener("click", clearExperiments);
 document.getElementById("toggleComparisonBtn").addEventListener("click", () => {
   comparisonExpanded = !comparisonExpanded;
+  if (currentExperimentDetail) {
+    renderComparisons(currentExperimentDetail);
+  }
+});
+document.addEventListener("change", event => {
+  if (!(event.target instanceof HTMLSelectElement)) return;
+  if (event.target.id !== "comparisonFilterSelect") return;
+  comparisonFilter = event.target.value;
+  comparisonExpanded = false;
   if (currentExperimentDetail) {
     renderComparisons(currentExperimentDetail);
   }
