@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LLMSafe 多模态模型攻击与安全评估平台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260603a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260604h" />
 </head>
 <body>
   <div class="page-shell">
@@ -262,8 +262,23 @@
         </div>
         <div id="compareBoard" class="compare-board"></div>
       </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>方法区别</h2>
+          <span class="muted">区分历史方法与当前更新后的实验方法</span>
+        </div>
+        <div id="methodDiffPanel" class="info-card">
+          <p>选择实验记录后显示该实验使用的新旧方法差异。</p>
+        </div>
+      </section>
     </main>
   </div>
-  <script src="/static/app.js?v=20260603a"></script>
+  <div id="imageLightbox" class="image-lightbox" hidden>
+    <button id="closeLightboxBtn" type="button" class="lightbox-close" aria-label="Close image preview">×</button>
+    <img id="lightboxImage" src="" alt="preview" />
+    <p id="lightboxCaption"></p>
+  </div>
+  <script src="/static/app.js?v=20260604h"></script>
 </body>
 </html>

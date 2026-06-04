@@ -17,6 +17,135 @@ let comparisonFilter = "all";
 let currentExperimentDetail = null;
 const collapsedComparisonCount = 1;
 
+const CURRENT_CLIP_RETRIEVAL_IDS = new Set(["2f010bc0", "7ddd7b57", "1d933efb", "1353d99e", "2049ae76"]);
+const CURRENT_KIMI_TYPEAWARE_IDS = new Set(["f44ce44a", "b5351516", "9690538a"]);
+
+function inferMethodVersion(result) {
+  const records = result.records || [];
+  const firstRecord = records[0] || {};
+  const metrics = result.aggregate_metrics || {};
+  if (CURRENT_CLIP_RETRIEVAL_IDS.has(result.experiment_id)) {
+    return {
+      label: "新方法",
+      kind: "clip_retrieval_scientific",
+      title: "CLIP 图文检索：科学化排序攻击",
+      points: [
+        "候选文本池扩大到 20，保留多正样本 caption。",
+        "contrastive_pgd 使用多正样本 + hardest negative 的 margin ranking loss。",
+        "新增 Recall@5、MRR、正样本平均排名等检索指标。",
+      ],
+    };
+  }
+  if (result.model_name === "clip_vit_b32" && result.scenario === "image_text_retrieval") {
+    const hasNewMetrics = metrics.retrieval_recall_at_5 !== undefined || metrics.mean_reciprocal_rank !== undefined;
+    const hasRankingObjective = records.some(item => item.attack_debug?.attack_objective === "multi_positive_hardest_negative_margin_ranking");
+    if (hasNewMetrics || hasRankingObjective) {
+      return {
+        label: "新方法",
+        kind: "clip_retrieval_scientific",
+        title: "CLIP 图文检索：科学化排序攻击",
+        points: [
+          "使用更完整的检索指标，包括 Recall@5 和 MRR。",
+          "contrastive_pgd 采用排序损失时，会记录 attack_objective。",
+          "成功判定要求攻击前正确项 rank=1，攻击后正确项跌出 rank=1。",
+        ],
+      };
+    }
+    return {
+      label: "旧方法",
+      kind: "clip_retrieval_legacy",
+      title: "CLIP 图文检索：历史方法",
+      points: [
+        "候选池较小，主要报告 Recall@1、Recall@3 和 rank shift。",
+        "contrastive_pgd 更接近单 source/target 相似度优化。",
+        "缺少 Recall@5、MRR 和多正样本 ranking objective 记录。",
+      ],
+    };
+  }
+  if (result.model_name === "api_openai_compatible" && result.scenario === "visual_question_answering") {
+    const hasTypeAwareTarget = records.some(item => item.target_selection === "type_aware_non_source");
+    if (hasTypeAwareTarget || CURRENT_KIMI_TYPEAWARE_IDS.has(result.experiment_id)) {
+      return {
+        label: "新方法",
+        kind: "kimi_vqa_typeaware",
+        title: "Kimi VQA：类型感知目标选择",
+        points: [
+          "攻击目标自动避开原始答案和原始预测。",
+          "优先选择同类型错误答案，例如 yes/no、数字、颜色、方向、开放答案。",
+          "记录 source_answer_type、target_answer_type 和 target_selection，方便分析目标合理性。",
+        ],
+      };
+    }
+    return {
+      label: "旧方法",
+      kind: "kimi_vqa_legacy",
+      title: "Kimi VQA：历史目标选择",
+      points: [
+        "目标常固定为 yes，可能出现原答案本来就是目标的无效样本。",
+        "候选答案没有强制同类型，目标可能跨题型。",
+        "历史结果已经修正了严格 ASR，但目标生成方法本身仍属于旧方法。",
+      ],
+    };
+  }
+  if (firstRecord.origin_correct_for_attack !== undefined || firstRecord.origin_already_target !== undefined) {
+    return {
+      label: "已修正",
+      kind: "strict_success",
+      title: "严格成功判定",
+      points: [
+        "历史 JSON 已按严格成功判定离线重算。",
+        "定向攻击要求从非目标变成目标，非定向攻击要求攻击前先正确。",
+        "该实验没有使用最新目标生成或排序攻击，但 ASR 判定已经更新。",
+      ],
+    };
+  }
+  return {
+    label: "旧方法",
+    kind: "legacy",
+    title: "历史方法",
+    points: [
+      "该实验生成于最新方法改造前。",
+      "建议与新方法实验分开比较，避免把方法差异误解释为模型差异。",
+    ],
+  };
+}
+
+function methodBadgeHtml(version) {
+  const cls = version.label === "新方法" ? "method-new" : version.label === "已修正" ? "method-fixed" : "method-old";
+  return `<span class="method-badge ${cls}">${version.label}</span>`;
+}
+
+function renderMethodDiff(result) {
+  const panel = document.getElementById("methodDiffPanel");
+  if (!panel) return;
+  const version = inferMethodVersion(result);
+  panel.innerHTML = `
+    <div class="method-title-row">
+      <strong>${version.title}</strong>
+      ${methodBadgeHtml(version)}
+    </div>
+    ${version.points.map(point => `<p>${point}</p>`).join("")}
+  `;
+}
+
+function openImageLightbox(src, caption) {
+  const lightbox = document.getElementById("imageLightbox");
+  const image = document.getElementById("lightboxImage");
+  const captionNode = document.getElementById("lightboxCaption");
+  image.src = src;
+  captionNode.textContent = caption || "";
+  lightbox.hidden = false;
+  document.body.classList.add("lightbox-open");
+}
+
+function closeImageLightbox() {
+  const lightbox = document.getElementById("imageLightbox");
+  const image = document.getElementById("lightboxImage");
+  lightbox.hidden = true;
+  image.src = "";
+  document.body.classList.remove("lightbox-open");
+}
+
 function metricCard(label, value) {
   return `<div class="metric-card"><span>${label}</span><strong>${value}</strong></div>`;
 }
@@ -187,8 +316,12 @@ function renderComparisons(result) {
   document.getElementById("comparisonList").innerHTML = visibleRecords.map(item => `
     <article class="compare-card">
       <div class="compare-images">
-        <img src="/${item.original_image}" alt="original" />
-        <img src="/${item.adversarial_image}" alt="adversarial" />
+        <button type="button" class="compare-image-button" data-image="/${item.original_image}" data-caption="${item.sample_id} original">
+          <img src="/${item.original_image}" alt="original" />
+        </button>
+        <button type="button" class="compare-image-button" data-image="/${item.adversarial_image}" data-caption="${item.sample_id} adversarial">
+          <img src="/${item.adversarial_image}" alt="adversarial" />
+        </button>
       </div>
       <div class="compare-meta">
         <strong>${item.sample_id}</strong>
@@ -241,8 +374,10 @@ function renderExperimentDetail(result) {
   currentExperimentDetail = result;
   const params = result.parameters || {};
   const aggregate = result.aggregate_metrics || {};
+  const methodVersion = inferMethodVersion(result);
   document.getElementById("experimentDetail").innerHTML = `
     <strong>${result.experiment_id}</strong>
+    <p>${methodBadgeHtml(methodVersion)}</p>
     <p>创建时间：${result.created_at}</p>
     <p>数据集：${result.dataset_id}</p>
     <p>模型：${result.model_name}</p>
@@ -261,6 +396,7 @@ function renderExperimentDetail(result) {
   `;
   renderMetrics(result);
   renderComparisons(result);
+  renderMethodDiff(result);
 }
 
 function markSelectedExperiment(experimentId) {
@@ -287,6 +423,7 @@ function renderHistory(items) {
   document.getElementById("experimentHistory").innerHTML = items.map(item => `
     <article class="history-item history-clickable" data-id="${item.experiment_id}" role="button" tabindex="0" onclick="window.openExperimentDetailById('${item.experiment_id}')">
       <strong>${item.experiment_id}</strong>
+      ${methodBadgeHtml(inferMethodVersion(item))}
       <p>${item.created_at}</p>
       <p>${item.scenario} / ${item.attack_name}</p>
       <p>${item.model_name}</p>
@@ -333,7 +470,7 @@ async function loadSamplesAndSummary() {
   const datasetId = document.getElementById("datasetSelect").value;
   if (!datasetId) return;
   const [samples, summary] = await Promise.all([
-    fetchJson(`/api/datasets/${datasetId}/samples?limit=12`),
+    fetchJson(`/api/datasets/${datasetId}/samples?limit=16`),
     fetchJson(`/api/datasets/${datasetId}/summary`),
   ]);
   renderSamples(samples);
@@ -654,6 +791,24 @@ document.addEventListener("change", event => {
   comparisonExpanded = false;
   if (currentExperimentDetail) {
     renderComparisons(currentExperimentDetail);
+  }
+});
+document.getElementById("comparisonList").addEventListener("click", event => {
+  const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+  if (!target) return;
+  const button = target.closest(".compare-image-button");
+  if (!button) return;
+  openImageLightbox(button.dataset.image, button.dataset.caption);
+});
+document.getElementById("closeLightboxBtn").addEventListener("click", closeImageLightbox);
+document.getElementById("imageLightbox").addEventListener("click", event => {
+  if (event.target.id === "imageLightbox") {
+    closeImageLightbox();
+  }
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !document.getElementById("imageLightbox").hidden) {
+    closeImageLightbox();
   }
 });
 document.getElementById("compareBtn").addEventListener("click", compareExperiments);

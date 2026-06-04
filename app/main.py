@@ -41,6 +41,35 @@ CONFIG_PATH = STORAGE_DIR / "runtime_config.json"
 IMAGE_SIZE = 64
 CLASS_NAMES = ["circle", "square", "triangle", "cross"]
 DEVICE = torch.device("cpu")
+YES_NO_ANSWERS = {"yes", "no"}
+NUMBER_WORDS = {
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+}
+COLOR_WORDS = {
+    "black",
+    "blue",
+    "brown",
+    "gray",
+    "green",
+    "grey",
+    "orange",
+    "pink",
+    "purple",
+    "red",
+    "white",
+    "yellow",
+}
+DIRECTION_WORDS = {"left", "right", "up", "down", "front", "back", "behind"}
 TRANSFORM = transforms.Compose(
     [
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
@@ -555,7 +584,7 @@ def infer_sample_class_label(sample: Dict) -> Optional[str]:
     return None
 
 
-def build_retrieval_candidates(sample: Dict, all_samples: List[Dict], pool_size: int = 10) -> Tuple[List[str], List[int]]:
+def build_retrieval_candidates(sample: Dict, all_samples: List[Dict], pool_size: int = 20) -> Tuple[List[str], List[int]]:
     positives = [caption for caption in sample.get("captions", []) if caption]
     candidates = [caption for caption in sample.get("retrieval_candidates", []) if caption]
     if not candidates:
@@ -603,6 +632,81 @@ def build_caption_candidates(sample: Dict, all_samples: List[Dict], pool_size: i
     return candidates[:pool_size], min(gold_index, pool_size - 1)
 
 
+def normalize_answer_text(answer: Optional[str]) -> str:
+    return (answer or "").strip().lower()
+
+
+def answer_type(answer: Optional[str]) -> str:
+    value = normalize_answer_text(answer)
+    if value in YES_NO_ANSWERS:
+        return "yes_no"
+    if value.isdigit() or value in NUMBER_WORDS:
+        return "number"
+    if value in COLOR_WORDS:
+        return "color"
+    tokens = {token.strip(".,;:/()[]{}") for token in value.replace("-", " ").split()}
+    if tokens and tokens.issubset(COLOR_WORDS | {"and"}):
+        return "color"
+    if tokens and tokens.issubset(NUMBER_WORDS | {"and"}):
+        return "number"
+    if value in DIRECTION_WORDS:
+        return "direction"
+    return "open"
+
+
+def vqa_global_answers(all_samples: List[Dict], limit: int = 300) -> List[str]:
+    answers: List[str] = []
+    seen = set()
+    for sample in all_samples:
+        for answer in [sample.get("answer"), *(sample.get("answer_candidates") or [])]:
+            value = normalize_answer_text(answer)
+            if value and value not in seen:
+                answers.append(value)
+                seen.add(value)
+            if len(answers) >= limit:
+                return answers
+    return answers
+
+
+def enrich_vqa_candidates(sample: Dict, all_samples: List[Dict], pool_size: int = 8) -> List[str]:
+    source_answer = normalize_answer_text(sample.get("answer"))
+    candidates: List[str] = []
+    seen = set()
+
+    def add_candidate(answer: Optional[str]) -> None:
+        value = normalize_answer_text(answer)
+        if value and value not in seen:
+            candidates.append(value)
+            seen.add(value)
+
+    add_candidate(source_answer)
+    source_type = answer_type(source_answer)
+    if source_type == "yes_no":
+        add_candidate("no" if source_answer == "yes" else "yes")
+
+    global_answers = vqa_global_answers(all_samples)
+    local_answers = [normalize_answer_text(answer) for answer in sample.get("answer_candidates", [])]
+    for answer in local_answers:
+        if answer != source_answer and answer_type(answer) == source_type:
+            add_candidate(answer)
+
+    for answer in global_answers:
+        if answer == source_answer:
+            continue
+        if answer_type(answer) == source_type:
+            add_candidate(answer)
+        if len(candidates) >= pool_size:
+            break
+
+    for answer in local_answers:
+        add_candidate(answer)
+    for answer in global_answers:
+        if len(candidates) >= pool_size:
+            break
+        add_candidate(answer)
+    return candidates[:pool_size]
+
+
 def scenario_candidates(
     sample: Dict,
     scenario_id: str,
@@ -614,10 +718,11 @@ def scenario_candidates(
         source_index = positive_indices[0] if positive_indices else 0
         return candidates, source_index, positive_indices
     if scenario_id == "visual_question_answering":
-        candidates = [answer for answer in sample.get("answer_candidates", []) if answer]
+        candidates = enrich_vqa_candidates(sample, all_samples)
         if not candidates:
             candidates = [sample["answer"]]
-        source_index = candidates.index(sample["answer"]) if sample["answer"] in candidates else 0
+        source_answer = normalize_answer_text(sample.get("answer"))
+        source_index = candidates.index(source_answer) if source_answer in candidates else 0
         return candidates, source_index, [source_index]
     if scenario_id == "image_captioning":
         candidates, source_index = build_caption_candidates(sample, all_samples)
@@ -635,12 +740,31 @@ def resolve_target_index_from_candidates(
     probabilities: Optional[List[float]],
     targeted: bool,
     target_label: Optional[str],
+    source_answer: Optional[str] = None,
+    origin_answer: Optional[str] = None,
+    prefer_same_type: bool = False,
 ) -> int:
+    blocked_answers = {
+        normalize_answer_text(source_answer),
+        normalize_answer_text(origin_answer),
+    }
+    blocked_answers.discard("")
+    negative_indices = [
+        idx
+        for idx in range(len(candidates))
+        if idx not in set(positive_indices) and normalize_answer_text(candidates[idx]) not in blocked_answers
+    ]
+    if not negative_indices:
+        negative_indices = [idx for idx in range(len(candidates)) if idx not in set(positive_indices)]
+    if prefer_same_type and source_answer:
+        source_type = answer_type(source_answer)
+        same_type_indices = [idx for idx in negative_indices if answer_type(candidates[idx]) == source_type]
+        if same_type_indices:
+            negative_indices = same_type_indices
     if targeted and target_label:
         for idx, candidate in enumerate(candidates):
-            if candidate == target_label:
+            if idx in negative_indices and candidate == target_label:
                 return idx
-    negative_indices = [idx for idx in range(len(candidates)) if idx not in set(positive_indices)]
     if not negative_indices:
         return positive_indices[0] if positive_indices else 0
     if probabilities:
@@ -925,6 +1049,16 @@ def rank_of_index(probabilities: List[float], target_index: int) -> int:
     return sorted_indices.index(target_index) + 1
 
 
+def ranks_of_indices(probabilities: List[float], indices: List[int]) -> List[int]:
+    return [rank_of_index(probabilities, idx) for idx in indices]
+
+
+def mean_reciprocal_rank(ranks: List[int]) -> float:
+    if not ranks:
+        return 0.0
+    return 1.0 / max(min(ranks), 1)
+
+
 def calc_prompt_metrics(origin_confidence: float, adv_confidence: float, success: bool, elapsed_ms: float) -> Dict:
     return {
         "success": success,
@@ -1013,6 +1147,60 @@ def clip_contrastive_attack(
     }
 
 
+def clip_retrieval_ranking_attack(
+    image_path: Path,
+    prompts: List[str],
+    positive_indices: List[int],
+    target_index: int,
+    epsilon: float,
+    alpha: float,
+    steps: int,
+    margin: float = 0.05,
+) -> Tuple[Image.Image, Dict]:
+    image = Image.open(image_path).convert("RGB")
+    original = clip_adapter._attack_preprocess(image).detach()  # noqa: SLF001
+    adv = original.clone()
+    positive_set = set(positive_indices)
+    negative_indices = [idx for idx in range(len(prompts)) if idx not in positive_set]
+    if not positive_indices or not negative_indices:
+        return clip_contrastive_attack(image_path, prompts, positive_indices[0] if positive_indices else 0, target_index, epsilon, alpha, steps)
+
+    losses: List[float] = []
+    selected_negatives: List[int] = []
+    for _ in range(steps):
+        adv.requires_grad_(True)
+        logits, _ = clip_adapter._forward(adv, prompts)  # noqa: SLF001
+        positive_logits = logits[0, positive_indices]
+        negative_logits = logits[0, negative_indices]
+        hardest_local = int(torch.argmax(negative_logits).item())
+        hardest_negative = negative_indices[hardest_local]
+        hardest_negative_logit = logits[0, hardest_negative]
+        mean_positive_logit = positive_logits.mean()
+        max_positive_logit = positive_logits.max()
+        ranking_loss = F.relu(max_positive_logit - hardest_negative_logit + margin)
+        alignment_loss = mean_positive_logit - hardest_negative_logit
+        loss = ranking_loss + 0.5 * alignment_loss
+        clip_adapter.model.zero_grad()
+        loss.backward()
+        adv = adv.detach() - alpha * adv.grad.sign()
+        delta = torch.clamp(adv - original, min=-epsilon, max=epsilon)
+        adv = original + delta
+        losses.append(float(loss.detach().cpu().item()))
+        selected_negatives.append(hardest_negative)
+
+    logits_adv, probs_adv = clip_adapter._forward(adv.detach(), prompts)  # noqa: SLF001
+    return clip_adapter._deprocess(adv.detach()), {  # noqa: SLF001
+        "attack_objective": "multi_positive_hardest_negative_margin_ranking",
+        "positive_indices": positive_indices,
+        "negative_count": len(negative_indices),
+        "margin": margin,
+        "selected_hard_negatives": selected_negatives,
+        "loss_trace": [round(value, 6) for value in losses],
+        "adversarial_probabilities": [round(float(v), 4) for v in probs_adv.squeeze(0).tolist()],
+        "adversarial_logits": [round(float(v), 4) for v in logits_adv.squeeze(0).tolist()],
+    }
+
+
 def ensemble_transfer_attack(
     image: Image.Image,
     true_index: int,
@@ -1076,7 +1264,10 @@ def aggregate_metrics(records: List[Dict], transfer_success_rate: Optional[float
     if any("retrieval_recall_at_1" in item for item in records):
         aggregate["retrieval_recall_at_1"] = round(sum(item.get("retrieval_recall_at_1", 0) for item in records) / len(records), 4)
         aggregate["retrieval_recall_at_3"] = round(sum(item.get("retrieval_recall_at_3", 0) for item in records) / len(records), 4)
+        aggregate["retrieval_recall_at_5"] = round(sum(item.get("retrieval_recall_at_5", 0) for item in records) / len(records), 4)
         aggregate["mean_rank_shift"] = round(sum(item.get("rank_shift", 0) for item in records) / len(records), 4)
+        aggregate["mean_positive_rank"] = round(sum(item.get("adversarial_positive_mean_rank", item.get("adversarial_rank", 0)) for item in records) / len(records), 4)
+        aggregate["mean_reciprocal_rank"] = round(sum(item.get("mean_reciprocal_rank", 0) for item in records) / len(records), 4)
         aggregate["mean_average_precision_proxy"] = round(
             sum(item.get("mean_precision_proxy", 1 / max(item.get("adversarial_rank", 1), 1)) for item in records) / len(records),
             4,
@@ -1209,6 +1400,9 @@ def run_clip_attack(req: AttackRequest, progress: ProgressCallback = None) -> Di
             origin["probabilities"],
             req.targeted or req.attack_name == "prompt_injection",
             req.target_label,
+            source_answer=prompts[source_index] if source_index < len(prompts) else sample.get("answer"),
+            origin_answer=prompts[origin["index"]] if origin["index"] < len(prompts) else None,
+            prefer_same_type=scenario_id == "visual_question_answering",
         )
         origin_rank = min(rank_of_index(origin["probabilities"], idx) for idx in positive_indices) if positive_indices else rank_of_index(origin["probabilities"], source_index)
         start = time.perf_counter()
@@ -1218,7 +1412,18 @@ def run_clip_attack(req: AttackRequest, progress: ProgressCallback = None) -> Di
         elif req.attack_name == "pgd":
             adv_image, debug = clip_adapter.pgd_attack(sample_path, prompts, source_index, target_index, req.epsilon, req.alpha, req.steps)
         elif req.attack_name == "contrastive_pgd":
-            adv_image, debug = clip_contrastive_attack(sample_path, prompts, source_index, target_index, req.epsilon, req.alpha, req.steps)
+            if scenario_id == "image_text_retrieval":
+                adv_image, debug = clip_retrieval_ranking_attack(
+                    sample_path,
+                    prompts,
+                    positive_indices,
+                    target_index,
+                    req.epsilon,
+                    req.alpha,
+                    req.steps,
+                )
+            else:
+                adv_image, debug = clip_contrastive_attack(sample_path, prompts, source_index, target_index, req.epsilon, req.alpha, req.steps)
         elif req.attack_name == "transfer_pgd":
             class_label = infer_sample_class_label(sample)
             if class_label is None:
@@ -1245,6 +1450,8 @@ def run_clip_attack(req: AttackRequest, progress: ProgressCallback = None) -> Di
         adv_image.save(ROOT / adv_rel_path)
         adv_pred = clip_adapter.predict_from_path(ROOT / adv_rel_path, prompts)
         adv_rank = min(rank_of_index(adv_pred["probabilities"], idx) for idx in positive_indices) if positive_indices else rank_of_index(adv_pred["probabilities"], source_index)
+        origin_positive_ranks = ranks_of_indices(origin["probabilities"], positive_indices) if positive_indices else [rank_of_index(origin["probabilities"], source_index)]
+        adversarial_positive_ranks = ranks_of_indices(adv_pred["probabilities"], positive_indices) if positive_indices else [rank_of_index(adv_pred["probabilities"], source_index)]
         elapsed_ms = (time.perf_counter() - start) * 1000
         targeted_like = req.targeted or req.attack_name == "prompt_injection"
         targeted_success = origin["index"] != target_index and adv_pred["index"] == target_index
@@ -1277,6 +1484,9 @@ def run_clip_attack(req: AttackRequest, progress: ProgressCallback = None) -> Di
                 "question": sample["question"],
                 "scenario": scenario_id,
                 "target_label": prompts[target_index],
+                "source_answer_type": answer_type(prompts[source_index]) if scenario_id == "visual_question_answering" else None,
+                "target_answer_type": answer_type(prompts[target_index]) if scenario_id == "visual_question_answering" else None,
+                "target_selection": "type_aware_non_source" if scenario_id == "visual_question_answering" else "default",
                 "original_prediction": prompts[origin["index"]],
                 "adversarial_prediction": prompts[adv_pred["index"]],
                 "origin_already_target": origin["index"] == target_index,
@@ -1286,9 +1496,15 @@ def run_clip_attack(req: AttackRequest, progress: ProgressCallback = None) -> Di
                 "positive_indices": positive_indices,
                 "origin_rank": origin_rank,
                 "adversarial_rank": adv_rank,
+                "origin_positive_ranks": origin_positive_ranks,
+                "adversarial_positive_ranks": adversarial_positive_ranks,
+                "origin_positive_mean_rank": round(sum(origin_positive_ranks) / len(origin_positive_ranks), 4),
+                "adversarial_positive_mean_rank": round(sum(adversarial_positive_ranks) / len(adversarial_positive_ranks), 4),
                 "rank_shift": adv_rank - origin_rank,
                 "retrieval_recall_at_1": 1 if adv_rank == 1 else 0,
                 "retrieval_recall_at_3": 1 if adv_rank <= 3 else 0,
+                "retrieval_recall_at_5": 1 if adv_rank <= 5 else 0,
+                "mean_reciprocal_rank": round(mean_reciprocal_rank(adversarial_positive_ranks), 4),
                 "logit_margin_shift": round(
                     (adv_pred["logits"][source_index] - adv_pred["logits"][target_index])
                     - (origin["logits"][source_index] - origin["logits"][target_index]),
@@ -1373,6 +1589,9 @@ def run_api_attack(req: AttackRequest, progress: ProgressCallback = None) -> Dic
                 origin.get("probabilities"),
                 True if req.attack_name == "prompt_injection" else req.targeted,
                 req.target_label,
+                source_answer=candidates[source_index] if source_index < len(candidates) else sample.get("answer"),
+                origin_answer=origin.get("answer"),
+                prefer_same_type=scenario_id == "visual_question_answering",
             )
             attack_messages = build_attack_messages(req, sample, candidates[target_index]) if req.attack_name == "prompt_injection" else []
             attack_prompt = append_user_injection(base_prompt, req, candidates[target_index]) if req.attack_name == "prompt_injection" else base_prompt
@@ -1482,6 +1701,9 @@ def run_api_attack(req: AttackRequest, progress: ProgressCallback = None) -> Dic
                     "question": sample["question"],
                     "scenario": scenario_id,
                     "target_label": candidates[target_index],
+                    "source_answer_type": answer_type(candidates[source_index]) if scenario_id == "visual_question_answering" else None,
+                    "target_answer_type": answer_type(candidates[target_index]) if scenario_id == "visual_question_answering" else None,
+                    "target_selection": "type_aware_non_source" if scenario_id == "visual_question_answering" else "default",
                     "original_prediction": origin["answer"],
                     "adversarial_prediction": adv["answer"],
                     "answer_shifted": answer_shifted,
@@ -1825,7 +2047,7 @@ def datasets():
 
 
 @app.get("/api/datasets/{dataset_id}/samples")
-def dataset_samples(dataset_id: str, limit: int = 12, label: Optional[str] = None, keyword: Optional[str] = None):
+def dataset_samples(dataset_id: str, limit: int = 16, label: Optional[str] = None, keyword: Optional[str] = None):
     samples = [normalize_sample(sample) for sample in store.load_samples(dataset_id)]
     if not samples:
         raise HTTPException(status_code=404, detail="Dataset not found")
